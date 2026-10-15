@@ -1,44 +1,89 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import api from "../api/client";
 
 function MyRequests() {
-  const [requests] = useState([
-    {
-      id: 1001,
-      vehicleNumber: "TS09AB1234",
-      problemCategory: "Battery",
-      description: "Vehicle is not starting.",
-      location: "Madhapur, Hyderabad",
-      status: "Requested",
-      date: "08 Oct 2026",
-    },
-    {
-      id: 1002,
-      vehicleNumber: "TS09AB1234",
-      problemCategory: "Tyre",
-      description: "Rear tyre is punctured.",
-      location: "Kondapur, Hyderabad",
-      status: "Completed",
-      date: "05 Oct 2026",
-    },
-  ]);
-
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyError, setHistoryError] = useState("");
+  const [statusNotice, setStatusNotice] = useState("");
+  const previousStatuses = useRef(null);
+
+  const statusLabel = (status) => ({
+    REQUESTED: "Requested",
+    ACCEPTED: "Accepted",
+    ON_THE_WAY: "On the Way",
+    IN_SERVICE: "In Service",
+    COMPLETED: "Completed",
+  }[status] || status);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      if (!active || document.hidden) return;
+      try {
+        const { data } = await api.get("/api/owner/requests");
+        if (!active) return;
+        const nextStatuses = new Map(data.map((request) => [request.id, request.status]));
+        if (previousStatuses.current !== null) {
+          const changed = data.filter((request) => previousStatuses.current.get(request.id)
+            && previousStatuses.current.get(request.id) !== request.status);
+          if (changed.length > 0) {
+            setStatusNotice(changed.map((request) => `Request #${request.id}: ${statusLabel(request.status)}`).join(" · "));
+          }
+        }
+        previousStatuses.current = nextStatuses;
+        setRequests(data);
+        setError("");
+      } catch {
+        if (active) setError("Unable to refresh your assistance requests. Please try again.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 15000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, []);
+
+  const formatDate = (value) => value
+    ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : "—";
+
+  const openRequest = async (request) => {
+    setSelectedRequest(request);
+    setHistory([]);
+    setHistoryError("");
+    try {
+      const response = await api.get(`/api/owner/requests/${request.id}/history`);
+      setHistory(response.data);
+    } catch {
+      setHistoryError("Unable to load request history.");
+    }
+  };
 
   const getStatusClass = (status) => {
     switch (status) {
       case "Requested":
+      case "REQUESTED":
         return "bg-warning text-dark";
 
       case "Accepted":
+      case "ACCEPTED":
         return "bg-primary";
 
       case "On the Way":
+      case "ON_THE_WAY":
         return "bg-info text-dark";
 
       case "In Service":
+      case "IN_SERVICE":
         return "bg-secondary";
 
       case "Completed":
+      case "COMPLETED":
         return "bg-success";
 
       default:
@@ -69,7 +114,12 @@ function MyRequests() {
             Assistance Requests
           </h5>
 
-          {requests.length === 0 ? (
+          {error && <div className="alert alert-danger" role="alert">{error}</div>}
+          {statusNotice && <div className="alert alert-info" role="status" aria-live="polite">Request update: {statusNotice}</div>}
+
+          {loading ? (
+            <div className="text-center py-5">Loading requests...</div>
+          ) : requests.length === 0 ? (
 
             <div className="text-center py-5">
 
@@ -126,7 +176,7 @@ function MyRequests() {
                       </td>
 
                       <td>
-                        {request.date}
+                        {formatDate(request.requestedAt)}
                       </td>
 
                       <td>
@@ -135,16 +185,14 @@ function MyRequests() {
                             request.status
                           )}`}
                         >
-                          {request.status}
+                          {statusLabel(request.status)}
                         </span>
                       </td>
 
                       <td>
                         <button
                           className="btn btn-sm btn-outline-primary"
-                          onClick={() =>
-                            setSelectedRequest(request)
-                          }
+                          onClick={() => openRequest(request)}
                         >
                           View
                         </button>
@@ -213,7 +261,7 @@ function MyRequests() {
               <div className="col-md-6">
                 <strong>Date</strong>
                 <p className="text-muted mb-0">
-                  {selectedRequest.date}
+                  {formatDate(selectedRequest.requestedAt)}
                 </p>
               </div>
 
@@ -233,9 +281,32 @@ function MyRequests() {
                       selectedRequest.status
                     )}`}
                   >
-                    {selectedRequest.status}
+                    {statusLabel(selectedRequest.status)}
                   </span>
                 </div>
+              </div>
+
+              {selectedRequest.status === "REQUESTED" && selectedRequest.matchingMessage && (
+                <div className="col-12">
+                  <div className={`alert ${selectedRequest.matchingStatus === "NO_ELIGIBLE_MECHANIC" || selectedRequest.matchingStatus === "LOCATION_REQUIRED" ? "alert-warning" : "alert-info"} mb-0`} role="status">
+                    {selectedRequest.matchingMessage}
+                  </div>
+                </div>
+              )}
+
+              <div className="col-12">
+                <strong>Status History</strong>
+                {historyError && <p className="text-danger mb-1">{historyError}</p>}
+                {history.length === 0 && !historyError
+                  ? <p className="text-muted mb-0">Loading or no history is available.</p>
+                  : <ul className="list-group list-group-flush mt-2">
+                    {history.map((entry, index) => (
+                      <li className="list-group-item px-0" key={`${entry.toStatus}-${index}`}>
+                        <span className="fw-semibold">{statusLabel(entry.toStatus)}</span>
+                        <span className="text-muted"> · {entry.changedByRole === "MECHANIC" ? entry.changedByName : "RoadAssist"} · {formatDate(entry.changedAt)}</span>
+                      </li>
+                    ))}
+                  </ul>}
               </div>
 
             </div>

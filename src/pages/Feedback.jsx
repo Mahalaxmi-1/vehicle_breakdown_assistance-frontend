@@ -1,28 +1,51 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import api from "../api/client";
 
 function Feedback() {
-  const [services, setServices] = useState([
-    {
-      id: 1002,
-      vehicleNumber: "TS09AB1234",
-      problemCategory: "Tyre",
-      mechanic: "Rajesh Kumar",
-      date: "05 Oct 2026",
-      rating: 0,
-      comment: "",
-      submitted: false,
-    },
-    {
-      id: 998,
-      vehicleNumber: "TS09AB1234",
-      problemCategory: "Battery",
-      mechanic: "Suresh Auto Services",
-      date: "22 Sep 2026",
-      rating: 5,
-      comment: "Good and quick service.",
-      submitted: true,
-    },
-  ]);
+  const [services, setServices] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const loadServices = async () => {
+    try {
+      const { data } = await api.get("/api/owner/feedback");
+      setServices(data.map((item) => ({
+        id: item.requestId,
+        vehicleNumber: item.vehicleNumber,
+        problemCategory: item.problemCategory,
+        mechanic: item.mechanicName,
+        date: item.feedback?.createdAt || "",
+        rating: item.feedback?.rating || 0,
+        comment: item.feedback?.comment || "",
+        submitted: Boolean(item.feedback),
+      })));
+      setError("");
+    } catch {
+      setError("Unable to load completed services. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    api.get("/api/owner/feedback")
+      .then(({ data }) => {
+        if (active) setServices(data.map((item) => ({
+          id: item.requestId,
+          vehicleNumber: item.vehicleNumber,
+          problemCategory: item.problemCategory,
+          mechanic: item.mechanicName,
+          date: item.feedback?.createdAt || "",
+          rating: item.feedback?.rating || 0,
+          comment: item.feedback?.comment || "",
+          submitted: Boolean(item.feedback),
+        })));
+      })
+      .catch(() => { if (active) setError("Unable to load completed services. Please try again."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const [selectedRating, setSelectedRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -34,25 +57,23 @@ function Feedback() {
     setComment(service.comment || "");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    setServices(
-      services.map((service) =>
-        service.id === selectedService.id
-          ? {
-              ...service,
-              rating: selectedRating,
-              comment: comment,
-              submitted: true,
-            }
-          : service
-      )
-    );
-
-    setSelectedService(null);
-    setSelectedRating(0);
-    setComment("");
+    try {
+      await api.post(`/api/owner/feedback/${selectedService.id}`, {
+        rating: selectedRating,
+        comment: comment.trim(),
+      });
+      setSelectedService(null);
+      setSelectedRating(0);
+      setComment("");
+      await loadServices();
+    } catch (requestError) {
+      setError(requestError.response?.status === 409
+        ? "Feedback has already been submitted or the request is not complete."
+        : "Unable to submit feedback. Please try again.");
+    }
   };
 
   return (
@@ -68,6 +89,7 @@ function Feedback() {
           Rate your completed assistance services and share your experience.
         </p>
       </div>
+      {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
       {/* Service List */}
       <div className="card border-0 shadow-sm">
@@ -78,7 +100,7 @@ function Feedback() {
             Completed Services
           </h5>
 
-          {services.length === 0 ? (
+          {loading ? <p className="text-muted">Loading completed services...</p> : services.length === 0 ? (
 
             <div className="text-center py-5">
 

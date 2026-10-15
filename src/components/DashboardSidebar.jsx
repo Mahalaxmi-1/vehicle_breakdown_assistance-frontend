@@ -1,6 +1,11 @@
 import { NavLink } from "react-router-dom";
 
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/useAuth";
+
 function DashboardSidebar({ role }) {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
   const menus = {
     OWNER: [
       { label: "Dashboard", path: "/owner/dashboard", icon: "📊" },
@@ -69,7 +74,16 @@ function DashboardSidebar({ role }) {
       </nav>
 
       <div className="sidebar-bottom">
-        <button className="sidebar-logout">
+        <button
+          className="sidebar-logout"
+          onClick={async () => {
+            try {
+              await logout();
+            } finally {
+              navigate("/login", { replace: true });
+            }
+          }}
+        >
           🚪 Logout
         </button>
       </div>
