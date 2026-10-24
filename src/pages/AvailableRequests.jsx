@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../api/client";
 
@@ -17,71 +16,83 @@ function AvailableRequests() {
   const seenRequestIds = useRef(null);
   const inFlight = useRef(false);
 
-  const loadRequests = useCallback(async ({ showLoading = false } = {}) => {
-    if (inFlight.current) return;
+  // Exclude completed jobs from active assignments.
+  const activeAssignedRequests = acceptedRequests.filter(
+    (request) => request.status !== "COMPLETED"
+  );
 
-    inFlight.current = true;
-    if (showLoading) setLoading(true);
+  const loadRequests = useCallback(
+    async ({ showLoading = false } = {}) => {
+      if (inFlight.current) return;
 
-    try {
-      const [available, mine, summary] = await Promise.all([
-        api.get("/api/mechanic/requests"),
-        api.get("/api/mechanic/requests/mine"),
-        api.get("/api/mechanic/requests/stats"),
-      ]);
+      inFlight.current = true;
 
-      if (
-        !Array.isArray(available.data) ||
-        !Array.isArray(mine.data)
-      ) {
-        throw new Error("Unexpected requests response from the server.");
-      }
+      if (showLoading) setLoading(true);
 
-      const nextRequests = available.data;
-      const nextIds = new Set(
-        nextRequests.map((request) => request.id)
-      );
+      try {
+        const [available, mine, summary] = await Promise.all([
+          api.get("/api/mechanic/requests"),
+          api.get("/api/mechanic/requests/mine"),
+          api.get("/api/mechanic/requests/stats"),
+        ]);
 
-      // Avoid treating the initial page load as a new-request notification.
-      if (seenRequestIds.current !== null) {
-        const added = nextRequests.filter(
-          (request) => !seenRequestIds.current.has(request.id)
-        );
-
-        if (added.length > 0) {
-          setNewRequestCount((count) => count + added.length);
-          setNewRequestNotice(
-            `${added.length} new assistance request${
-              added.length === 1 ? " is" : "s are"
-            } available.`
-          );
+        if (
+          !Array.isArray(available.data) ||
+          !Array.isArray(mine.data)
+        ) {
+          throw new Error("Unexpected requests response from the server.");
         }
-      }
 
-      seenRequestIds.current = nextIds;
-      setRequests(nextRequests);
-      setAcceptedRequests(mine.data);
-      setStats(summary.data);
-      setError("");
-
-      setSelectedRequest((current) => {
-        if (!current) return null;
-
-        return (
-          nextRequests.find((request) => request.id === current.id) || null
+        const nextRequests = available.data;
+        const nextIds = new Set(
+          nextRequests.map((request) => request.id)
         );
-      });
-    } catch (loadError) {
-      setError(
-        loadError.response?.data?.message ||
-          loadError.message ||
-          "Unable to load requests. Please try again."
-      );
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
-    }
-  }, []);
+
+        // Notify only about new requests after the initial load.
+        if (seenRequestIds.current !== null) {
+          const added = nextRequests.filter(
+            (request) => !seenRequestIds.current.has(request.id)
+          );
+
+          if (added.length > 0) {
+            setNewRequestCount((count) => count + added.length);
+            setNewRequestNotice(
+              `${added.length} new assistance request${
+                added.length === 1 ? " is" : "s are"
+              } available.`
+            );
+          }
+        }
+
+        seenRequestIds.current = nextIds;
+
+        setRequests(nextRequests);
+        setAcceptedRequests(mine.data);
+        setStats(summary.data);
+        setError("");
+
+        setSelectedRequest((current) => {
+          if (!current) return null;
+
+          return (
+            nextRequests.find(
+              (request) => request.id === current.id
+            ) || null
+          );
+        });
+      } catch (loadError) {
+        setError(
+          loadError.response?.data?.message ||
+            loadError.message ||
+            "Unable to load requests. Please try again."
+        );
+      } finally {
+        inFlight.current = false;
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     let active = true;
@@ -100,7 +111,10 @@ function AvailableRequests() {
       if (!document.hidden) refresh();
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
 
     return () => {
       active = false;
@@ -127,6 +141,7 @@ function AvailableRequests() {
       setSelectedRequest(null);
       setMessage(`Request #${request.id} has been accepted.`);
       setNewRequestNotice("");
+
       await loadRequests({ showLoading: false });
     } catch (acceptError) {
       setError(
@@ -238,7 +253,7 @@ function AvailableRequests() {
             <div className="card-body">
               <p className="text-muted mb-1">Available Requests</p>
               <h3 className="fw-bold mb-0">
-                {stats.availableRequests ?? requests.length}
+                {loading ? "—" : stats.availableRequests ?? requests.length}
               </h3>
             </div>
           </div>
@@ -249,7 +264,7 @@ function AvailableRequests() {
             <div className="card-body">
               <p className="text-muted mb-1">Assigned to You</p>
               <h3 className="fw-bold mb-0">
-                {acceptedRequests.length}
+                {loading ? "—" : activeAssignedRequests.length}
               </h3>
             </div>
           </div>
@@ -442,12 +457,12 @@ function AvailableRequests() {
         <div className="card-body p-4">
           <h5 className="fw-bold mb-3">Requests Assigned to You</h5>
 
-          {acceptedRequests.length === 0 ? (
+          {activeAssignedRequests.length === 0 ? (
             <p className="text-muted mb-0">
-              You have no assigned requests.
+              You have no active assigned requests.
             </p>
           ) : (
-            acceptedRequests.map((request) => (
+            activeAssignedRequests.map((request) => (
               <div
                 key={request.id}
                 className="d-flex flex-wrap justify-content-between align-items-center border-bottom py-3 gap-2"
@@ -459,13 +474,7 @@ function AvailableRequests() {
                   </p>
                 </div>
 
-                <span
-                  className={`badge ${
-                    request.status === "COMPLETED"
-                      ? "bg-success"
-                      : "bg-primary"
-                  }`}
-                >
+                <span className="badge bg-primary">
                   {statusLabel(request.status)}
                 </span>
               </div>
